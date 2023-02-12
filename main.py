@@ -65,6 +65,29 @@ def parseStatus(status):
     else:
         return "Last seen long time ago"
         
+def toFile(username: str, status: str):
+    filename = os.path.join(config["General"]["results_folder"], statuses_to_files.get(status, "exacttime.txt"))
+    if not os.path.exists(filename):
+        open(filename, 'w').close()
+
+    if status not in statuses_to_files.keys():
+        line = "@" + username + " | " + status
+    else:
+        line = "@" + username
+    
+    with open(filename, 'a', encoding="utf-8") as file:
+        logger.debug(f"Writing {line} to {filename}")
+        file.write(line + '\n')
+
+def eraseFromMain(username: str):
+    with open(config["General"]["users_list"], 'r', encoding="utf-8") as file:
+        raw = file.read().splitlines()
+        usernames = list([line.strip() for line in raw if line.strip() != ""])
+    logger.debug(f"Remove @{username} from main list")
+    usernames.remove(username)
+    with open(config["General"]["users_list"], 'w', encoding="utf-8") as file:
+        file.write('\n'.join(usernames))
+
 async def getStatuses(usernames: list, delay: list):
     logger.info(f"Start retrieving information of users in a list...")
     logger.debug(f"Total length of usernames: {len(usernames)}. Delay range: {delay}")
@@ -88,6 +111,11 @@ async def getStatuses(usernames: list, delay: list):
                 logger.error(f"Error while getting info of {username}: {e}")
                 status = "Error"
                 statuses[username] = "Error"
+        finally:
+            toFile(username, status)
+            eraseFromMain(username)
+
+        
 
         
         logger.info(f"@{username} | {status}")
@@ -110,9 +138,7 @@ def distributeToFiles(statuses: dict):
         else:
             nv_statuses[status].append(k)
 
-    if not os.path.exists(config["General"]["results_folder"]):
-        logger.debug(f"Creating folder for results: {config['General']['results_folder']}")
-        os.mkdir(config["General"]["results_folder"])
+    
 
     if config["General"]["clear_results"]:
         files = os.listdir(config["General"]["results_folder"])
@@ -145,10 +171,14 @@ def main():
             logger.error(f"Please, make sure delay range provided correctly in configuration file (e.g. 5-10)")
             return
 
+        if not os.path.exists(config["General"]["results_folder"]):
+            logger.debug(f"Creating folder for results: {config['General']['results_folder']}")
+            os.mkdir(config["General"]["results_folder"])
+
         with client:
             statuses = client.loop.run_until_complete(getStatuses(usernames, sorted(delay_range)))
         
-        distributeToFiles(statuses)
+        # distributeToFiles(statuses)
         logger.success(f"Finished checking all the usernames")
     except ValueError:
         logger.error(f"Please, check if all the credentials provided in configuration file are valid and non-empty.")
