@@ -1,0 +1,18 @@
+[Telegram]
+api_id = 
+api_hash = ""
+
+[Logging]
+logs_folder = "logs"
+sink = "main_{time:DD-MM-YYYY}.log"
+format = "{time: HH:mm:ss:SS DD.MM.YYYY} | {level} | {message}"
+rotation = "00:00"
+compression = "zip"
+write_level = "DEBUG"
+console_level = "INFO"
+
+[General]
+users_list = "usernames.txt"
+delay = "5-10"
+results_folder = "res"
+clear_results = false # true or false; Clear results after each run
