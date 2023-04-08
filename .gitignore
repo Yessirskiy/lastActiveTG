@@ -1,3 +1,9 @@
 .venv
 
 config.toml
+check.txt
+usernames.txt
+*.session
+test.py
+logs
+res

@@ -16,6 +16,9 @@ import random
 import time
 import os
 import sys
+import asyncio
+import threading
+import math
 
 statuses_to_files = {
     "Error" : "errors.txt",
@@ -25,6 +28,15 @@ statuses_to_files = {
     "Last seen month ago" : "month.txt",
     "Last seen long time ago" : "longtime.txt"
 }
+
+def get_or_create_eventloop():
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError as ex:
+        if "There is no current event loop in thread" in str(ex):
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return asyncio.get_event_loop()
 
 def setLogging(): 
     try:
@@ -66,14 +78,15 @@ def parseStatus(status):
         return "Last seen long time ago"
         
 def toFile(username: str, status: str):
-    filename = os.path.join(config["General"]["results_folder"], statuses_to_files.get(status, "exacttime.txt"))
+    filename = os.path.join(config["General"]["results_folder"], statuses_to_files.get(status, f"{status.split(',')[0].split('/', 1)[1].replace('/', '-')}.txt"))
     if not os.path.exists(filename):
         open(filename, 'w').close()
 
-    if status not in statuses_to_files.keys():
-        line = "@" + username + " | " + status
-    else:
-        line = "@" + username
+    # if status not in statuses_to_files.keys():
+    #     line = "@" + username + " | " + status
+    # else:
+    #     line = "@" + username
+    line = "@" + username
     
     with open(filename, 'a', encoding="utf-8") as file:
         logger.debug(f"Writing {line} to {filename}")
@@ -88,10 +101,11 @@ def eraseFromMain(username: str):
     with open(config["General"]["users_list"], 'w', encoding="utf-8") as file:
         file.write('\n'.join(usernames))
 
-async def getStatuses(usernames: list, delay: list):
+async def getStatuses(client: TelegramClient, usernames: list, delay: list):
     logger.info(f"Start retrieving information of users in a list...")
     logger.debug(f"Total length of usernames: {len(usernames)}. Delay range: {delay}")
     statuses = {}
+    await client.sign_in()
     for username in usernames:
         try:
             logger.debug(f"Getting full information of {username}")
@@ -115,9 +129,6 @@ async def getStatuses(usernames: list, delay: list):
             toFile(username, status)
             eraseFromMain(username)
 
-        
-
-        
         logger.info(f"@{username} | {status}")
         sleep = random.randint(delay[0], delay[1])
         logger.debug(f"Sleeping for {sleep} seconds")
@@ -125,7 +136,7 @@ async def getStatuses(usernames: list, delay: list):
 
     return statuses
 
-def distributeToFiles(statuses: dict):
+#def distributeToFiles(statuses: dict):
     nv_statuses = {}
     logger.debug(f"Reversing an intial statuses dict")
     for k, v in statuses.items():
@@ -154,16 +165,31 @@ def distributeToFiles(statuses: dict):
         done = accs + v
         with open(file, 'w', encoding="utf-8") as f:                    
             f.write("\n".join(done))
-    
+
+def run(client: TelegramClient, usernames: list, delay: list):
+    loop = get_or_create_eventloop()
+    future = asyncio.ensure_future(getStatuses(client, usernames, delay))
+    loop.run_until_complete(future)
+
 def main():
     try:
-        delay_raw = config["General"]["delay"]
+        if not os.path.exists(config["General"]["sessions_folder"]): 
+            logger.debug(f"Creating folder for sessions: {config['General']['sessions_folder']}")
+            os.mkdir(config["General"]["sessions_folder"])
 
-        with open(config["General"]["users_list"], 'r', encoding="utf-8") as file:
-            logger.debug(f"Parsing usernames from {config['General']['users_list']}")
-            raw = file.read().splitlines()
-            usernames = [line.strip() for line in raw if line.strip() != ""]
+        if not os.path.exists(config["General"]["results_folder"]):
+            logger.debug(f"Creating folder for results: {config['General']['results_folder']}")
+            os.mkdir(config["General"]["results_folder"])
         
+        
+        sessions = os.listdir(config["General"]["sessions_folder"])
+        if len(sessions) == 0:
+            logger.error(f"Please, insert session files into sessions folder...")
+            return
+        clients = [TelegramClient(session=os.path.join(config["General"]["sessions_folder"], client)) for client in sessions]
+            
+
+        delay_raw = config["General"]["delay"]
         logger.debug(f"Parsing delay: {delay_raw}")
         if "-" in delay_raw:
             delay_range = [int(delay) for delay in delay_raw.split("-")]   
@@ -171,14 +197,24 @@ def main():
             logger.error(f"Please, make sure delay range provided correctly in configuration file (e.g. 5-10)")
             return
 
-        if not os.path.exists(config["General"]["results_folder"]):
-            logger.debug(f"Creating folder for results: {config['General']['results_folder']}")
-            os.mkdir(config["General"]["results_folder"])
-
-        with client:
-            statuses = client.loop.run_until_complete(getStatuses(usernames, sorted(delay_range)))
+        with open(config["General"]["users_list"], 'r', encoding="utf-8") as file:
+            logger.debug(f"Parsing usernames from {config['General']['users_list']}")
+            raw = file.read().splitlines()
+            usernames = [line.strip() for line in raw if line.strip() != ""]
         
-        # distributeToFiles(statuses)
+        amount = math.ceil(len(usernames) / len(clients))
+        counter = 0
+        logger.debug(f"Usernames to check from one acc: {amount}")
+        for client in clients:
+            logger.debug(f"Launching {client}... To check: {counter} - {counter + amount}")
+            threading.Thread(target=run, args=(client, usernames[counter:(counter+amount)], sorted(delay_range),)).start()
+            counter += amount
+
+        while True:
+            rest = open(config["General"]["users_list"], 'r', encoding="utf-8").read().splitlines()
+            if len(rest) == 0:
+                break
+            time.sleep(5)
         logger.success(f"Finished checking all the usernames")
     except ValueError:
         logger.error(f"Please, check if all the credentials provided in configuration file are valid and non-empty.")
@@ -192,3 +228,4 @@ if __name__ == "__main__":
     setLogging()
     client = TelegramClient("main", config["Telegram"]["api_id"], config["Telegram"]["api_hash"]) 
     main()
+    input("Press ENTER to exit...")
